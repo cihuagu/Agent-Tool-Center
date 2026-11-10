@@ -133,7 +133,7 @@ export function createApp() {
         const heartbeat = setInterval(() => {
           try { res.write(": ping\n\n"); } catch { clearInterval(heartbeat); subscribers.delete(res); }
         }, 20000);
-        req.on("close", () => {
+        res.on("close", () => {
           clearInterval(heartbeat);
           subscribers.delete(res);
         });
