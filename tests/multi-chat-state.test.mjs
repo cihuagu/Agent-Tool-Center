@@ -192,6 +192,60 @@ test('permission requests synchronize the current card without carrying an unrel
   }
 });
 
+test('distinct permission requests without call IDs are retained and retries are idempotent', () => {
+  const state = createMultiChatState({ clock: () => new Date(time) });
+  const first = event('PermissionRequest', {
+    toolName: 'alpha/tool', toolUseId: null, at: '2026-11-11T00:00:00.001Z',
+  });
+  const second = event('PermissionRequest', {
+    toolName: 'beta/tool', toolUseId: null, at: '2026-11-11T00:00:00.002Z',
+  });
+
+  state.accept(event('UserPromptSubmit'));
+  state.accept(first);
+  state.accept(second);
+  const snapshot = state.snapshot();
+  const card = snapshot.sessions[0];
+  assert.equal(card.status, 'waiting');
+  assert.equal(card.turnId, turn);
+  assert.equal(card.toolName, 'beta/tool');
+  assert.equal(card.toolUseId, null);
+  assert.deepEqual(card.history.filter((item) => item.event === 'PermissionRequest'), [
+    { event: 'PermissionRequest', at: first.at, toolName: 'alpha/tool', toolUseId: null },
+    { event: 'PermissionRequest', at: second.at, toolName: 'beta/tool', toolUseId: null },
+  ]);
+  state.accept(second);
+  assert.deepEqual(state.snapshot(), snapshot);
+});
+
+test('no-ID permission requests cannot overwrite a newer or closed root card', () => {
+  for (const [completion, status] of [['Stop', 'idle'], ['Interrupt', 'interrupted']]) {
+    const state = createMultiChatState({ clock: () => new Date(time) });
+    const at = (increment) => new Date(Date.parse(time) + increment).toISOString();
+    const card = () => {
+      const { turnId, status, toolName, toolUseId } = state.snapshot().sessions[0];
+      return { turnId, status, toolName, toolUseId };
+    };
+    state.accept(event('UserPromptSubmit', { at: at(0) }));
+    state.accept(event('UserPromptSubmit', { turnId: next, at: at(1) }));
+    state.accept(event('PreToolUse', {
+      turnId: next, toolName: 'root/tool', toolUseId: 'root-call', at: at(2),
+    }));
+    const expected = { turnId: next, status: 'tool_running', toolName: 'root/tool', toolUseId: 'root-call' };
+    state.accept(event('PermissionRequest', { toolName: 'old/tool', toolUseId: null, at: at(3) }));
+    assert.deepEqual(card(), expected);
+    state.accept(event('PermissionRequest', {
+      turnId: next, subagent: true, toolName: 'subagent/tool', toolUseId: null, at: at(4),
+    }));
+    assert.deepEqual(card(), expected);
+    state.accept(event(completion, { turnId: next, at: at(5) }));
+    state.accept(event('PermissionRequest', {
+      turnId: next, toolName: 'late/tool', toolUseId: null, at: at(6),
+    }));
+    assert.deepEqual(card(), { ...expected, status });
+  }
+});
+
 test('concurrent tools remain active until each known call returns', () => {
   const state = createMultiChatState({ clock: () => new Date(time) });
   const call = (name, id, toolName) =>

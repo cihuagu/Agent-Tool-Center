@@ -94,8 +94,9 @@ export function createMultiChatState({ clock = () => new Date() } = {}) {
     }
 
     const key = JSON.stringify([event.event, event.turnId, event.toolUseId, event.subagent,
-      ...((event.event === 'SessionStart' || event.event === 'SessionEnd') &&
-        event.turnId === null && event.toolUseId === null ? [event.at] : [])]);
+      ...(((event.event === 'SessionStart' || event.event === 'SessionEnd') &&
+        event.turnId === null && event.toolUseId === null) ||
+        (event.event === 'PermissionRequest' && event.toolUseId === null) ? [event.at] : [])]);
     if (session.seen.includes(key)) return true;
     session.seen.push(key);
     if (session.seen.length > 200) session.seen.shift();
