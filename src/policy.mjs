@@ -32,7 +32,7 @@ export function chooseTools(plan, requestedMode, requestedIds) {
   const allowed = new Set(plan.candidates.map(item => item.toolId));
   for (const id of requestedIds) {
     if (!allowed.has(id)) {
-      throw new PolicyError("工具未包含在此计划或不可用：" + id, "TOOL_NOT_ALLOWED", 403);
+      throw new PolicyError("工具未包含在此计划或不可用", "TOOL_NOT_ALLOWED", 403);
     }
   }
 
@@ -47,7 +47,7 @@ export function chooseTools(plan, requestedMode, requestedIds) {
 
   for (const id of chosen) {
     if (!allowed.has(id)) {
-      throw new PolicyError("执行器拒绝未经授权的工具：" + id, "TOOL_NOT_ALLOWED");
+      throw new PolicyError("执行器拒绝未经授权的工具", "TOOL_NOT_ALLOWED");
     }
   }
 

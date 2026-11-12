@@ -2,6 +2,7 @@
   "name": "agent-tool-center",
   "version": "0.1.0",
   "private": true,
+  "license": "MIT",
   "type": "module",
   "description": "Local-first AI tool selection and execution observability proof of concept",
   "scripts": {
@@ -9,6 +10,9 @@
     "start": "node src/server.mjs",
     "test": "node --test tests/*.test.mjs",
     "check": "npm test"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/sdk-v1": "npm:@modelcontextprotocol/sdk@1.29.0"
   },
   "engines": {
     "node": ">=22"

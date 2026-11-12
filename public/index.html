@@ -40,11 +40,20 @@
 
       <div class="notice" role="note">
         <div class="notice-icon">i</div>
-        <div><strong>当前是可运行的本地验证版本</strong><span>只连接本机 Node.js 和 Git 的只读 CLI。推荐采用关键词规则；尚未接入大模型、MCP 或 ChatGPT 原生工具。</span></div>
+        <div><strong>当前是可运行的本地验证版本</strong><span>连接 Node.js / Git 只读 CLI，以及经 MCPHub 调用的本地测试 fixture。MCPHub 依赖项目内 .cache/mcphub-eval，新克隆需按 CLI 交接准备；缺失时显示不可用。推荐采用关键词规则，未接入大模型或 ChatGPT 原生工具。</span></div>
       </div>
 
       <div class="workspace">
         <section class="main-column">
+          <article class="panel recommendation-panel">
+            <div class="section-head">
+              <div><div class="section-kicker">CODEX / TOOL PLAN</div><h2>Codex 多步骤工具计划</h2></div>
+            </div>
+            <p class="aside-footnote">先查看原始提案；支持选择的待确认计划可勾选步骤，并使用上移、下移调整拟执行顺序，再点击“允许此计划”。至少选择一项才能批准，空选择仍可拒绝。旧版后端仅提供只读预览。批准后执行范围与顺序冻结，不支持追加或重试。本页草稿刷新后不保留，确认期限仍为原始 30 秒；选中的版本查询仍受 Git / Node.js 授权开关约束，固定项目检查由本次计划审批覆盖。停止后续步骤时，已启动的只读步骤可能继续完成并保留真实结果。</p>
+            <p id="codexPlanStatus" class="feedback" aria-live="polite">正在读取 Codex 多步骤工具计划…</p>
+            <div id="codexPlanCards" class="candidate-list" aria-live="polite"></div>
+          </article>
+
           <article class="panel task-panel">
             <div class="section-head">
               <div><div class="section-kicker">01 / PLAN</div><h2>新建工具任务</h2></div>
@@ -53,7 +62,7 @@
             <label class="field-label" for="taskInput">你希望 AI 完成什么任务？</label>
             <textarea id="taskInput" maxlength="1500" spellcheck="false" placeholder="例如：检查本机 Node.js 和 Git 是否可用，并输出版本信息">检查本机 Node.js 和 Git 版本，确认开发环境</textarea>
             <div class="input-foot"><span>仅作为工具匹配输入，不会发送给外部模型</span><span id="charCount">0 / 1500</span></div>
-            <div class="mode-head"><span>执行决策方式</span><span>可随时切换</span></div>
+            <div class="mode-head"><span>执行决策方式</span><span>混合：自动包含推荐项，并加上勾选项；仅执行勾选项请用人工模式</span></div>
             <div class="mode-switch" role="radiogroup" aria-label="工具选择模式">
               <label class="mode"><input type="radio" name="mode" value="manual" /><span>人工选择</span></label>
               <label class="mode"><input type="radio" name="mode" value="auto" /><span>自动选择</span></label>
@@ -85,11 +94,46 @@
         <aside class="side-column">
           <section class="panel tools-panel">
             <div class="section-head">
+              <div><div class="section-kicker">CODEX / OBSERVER</div><h2>Codex 聊天工具 · 只读观察</h2></div>
+            </div>
+            <label class="field-label" for="observerThread">明确选定的本机聊天 UUID 或链接</label>
+            <input id="observerThread" type="text" maxlength="120" spellcheck="false" autocomplete="off" placeholder="thread://UUID?hostId=local" />
+            <div class="actions">
+              <button id="observerStart" class="secondary-btn" type="button" disabled>开始只读观察</button>
+              <button id="observerStop" class="secondary-btn" type="button" disabled>停止观察</button>
+            </div>
+            <p id="observerStatus" class="feedback" aria-live="polite">正在读取观察状态…</p>
+            <p id="observerError" class="feedback error" aria-live="polite"></p>
+            <p class="aside-footnote">默认关闭，仅读取所选聊天最近 20 轮的终端、function、custom 工具元数据，原始文件最多读取末尾 2 MiB。“已返回”表示已有返回记录；原生审批由 Codex 处理。不能阻止原生调用，不显示命令、输出或聊天正文。停止后关闭本轮观察进程，记录暂存内存。</p>
+          </section>
+
+          <section class="panel tools-panel">
+            <div class="section-head">
+              <div><div class="section-kicker">CODEX / MCP</div><h2>Codex 版本查询授权</h2></div>
+            </div>
+            <label class="field-label" for="codexEnabled"><input id="codexEnabled" type="checkbox" disabled /> 允许 Codex 查询 Git 版本</label>
+            <p id="codexStatus" class="feedback" aria-live="polite">正在读取后端授权状态…</p>
+            <label class="field-label" for="codexNodeEnabled"><input id="codexNodeEnabled" type="checkbox" disabled /> 允许 Codex 查询 Node.js 版本</label>
+            <p id="codexNodeStatus" class="feedback" aria-live="polite">正在读取后端授权状态…</p>
+            <p class="aside-footnote">两项独立授权，默认均禁用；仅控制经工具中心接入的对应 Codex 查询，重启服务后均恢复禁用。调用 ID 与版本结果显示在下方时间线。</p>
+          </section>
+
+          <section class="panel tools-panel">
+            <div class="section-head">
+              <div><div class="section-kicker">CODEX / APPROVAL</div><h2>本项目 Git 工作区检查</h2></div>
+            </div>
+            <p class="aside-footnote">用途：检查本项目 Git 工作区并返回变更数量。范围：仅 Agent Tool Center 项目，只读，不显示路径、文件名、内容或分支。每次请求均须确认，45 秒后过期；“允许本次”只执行一次。</p>
+            <p id="approvalStatus" class="feedback" aria-live="polite">正在读取待确认请求…</p>
+            <div id="approvalCards" class="candidate-list" aria-live="polite"></div>
+          </section>
+
+          <section class="panel tools-panel">
+            <div class="section-head">
               <div><div class="section-kicker">REGISTRY</div><h2>已接入的工具</h2></div>
               <button id="refreshBtn" class="icon-btn" type="button" title="重新检测工具" aria-label="重新检测工具">↻</button>
             </div>
             <div id="toolRegistry" class="registry-list"><div class="mini-empty">正在检测本机工具…</div></div>
-            <p class="aside-footnote">目前仅显示经过真实运行检查的本地 CLI。其他工具不会被假设为已接入。</p>
+            <p class="aside-footnote">MCP 可用表示真实握手与工具发现通过，调用成功以事件为准。本地 fixture 只验证链路，不代表第三方服务已接入。</p>
           </section>
 
           <section class="panel log-panel">

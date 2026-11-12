@@ -12,3 +12,24 @@ logs/*
 .DS_Store
 Thumbs.db
 *.local
+
+# 本地协作、环境与原始验收材料；已跟踪文件不会因此取消跟踪。
+docs/协作进度/
+docs/superpowers/
+docs/原始环境/
+docs/原始验收/
+docs/本地证据/
+docs/08-环境与运行.md
+docs/10-启动验收报告.md
+docs/11-*.md
+docs/12-Codex-Git版本接入.md
+docs/13-Codex聊天终端观察.md
+docs/14-Codex项目状态单次确认.md
+docs/15-Codex多步骤工具计划.md
+docs/16-Codex计划删选与重排.md
+docs/17-能力选择目标澄清.md
+docs/18-聊天内能力选择助手.md
+docs/19-桌面能力真实验收.md
+docs/20-聊天刷新能力目录.md
+docs/21-原生悬浮状态窗.md
+docs/22-当前桌面聊天接入.md

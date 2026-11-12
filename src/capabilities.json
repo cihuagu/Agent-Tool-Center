@@ -1,0 +1,44 @@
+{
+  "capabilities": [
+    {
+      "capabilityId": "local_cli",
+      "name": "本地 CLI",
+      "kind": "native",
+      "sourceId": "local_cli",
+      "taskTypes": ["file_read", "file_search", "terminal"],
+      "availability": "not_checked",
+      "execution": { "type": "host_tool", "id": "local_cli" },
+      "priority": 0
+    },
+    {
+      "capabilityId": "remote_desktop_commander",
+      "name": "Remote Desktop Commander",
+      "kind": "plugin",
+      "sourceId": "remote_desktop_commander",
+      "taskTypes": ["file_read", "file_search", "terminal"],
+      "availability": "not_checked",
+      "execution": { "type": "host_tool", "id": "remote_desktop_commander" },
+      "priority": 10
+    },
+    {
+      "capabilityId": "computer_use",
+      "name": "Computer Use",
+      "kind": "native",
+      "sourceId": "computer_use",
+      "taskTypes": ["desktop_ui"],
+      "availability": "not_checked",
+      "execution": { "type": "host_tool", "id": "computer_use" },
+      "priority": 0
+    },
+    {
+      "capabilityId": "agent_desktop",
+      "name": "Agent Desktop",
+      "kind": "skill",
+      "sourceId": "agent_desktop",
+      "taskTypes": ["desktop_ui"],
+      "availability": "not_checked",
+      "execution": { "type": "local_cli", "id": "agent_desktop" },
+      "priority": 10
+    }
+  ]
+}

@@ -86,7 +86,8 @@ test("local HTTP server: real tools, denial, execution and one-time plan", async
   const [listStatus, catalog] = await get("/api/tools");
   assert.equal(listStatus, 200);
   assert.equal(catalog.discovery, "verified-local-cli");
-  assert.equal(catalog.tools.length, 2);
+  assert.equal(catalog.tools.length, 3);
+  assert.equal(catalog.tools.find(t => t.id === "mcp.fixture.read").kind, "mcp");
 
   const [planStatus, generated] = await post("/api/plan", { task: "检查 Node.js 和 Git 版本" });
   assert.equal(planStatus, 200);
