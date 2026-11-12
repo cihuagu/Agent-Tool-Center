@@ -31,10 +31,114 @@ test('old and subagent completions cannot end a newer turn', () => {
   state.accept(event('Stop', { turnId: next, subagent: true }));
   state.accept(event('SessionStart', { turnId: null }));
   state.accept(event('SessionEnd', { turnId: null }));
+  state.accept(event('SessionEnd'));
+  state.accept(event('SessionEnd', { turnId: next, subagent: true }));
   state.accept(event('UserPromptSubmit'));
   assert.equal(state.snapshot().sessions[0].turnId, next);
   assert.equal(state.snapshot().sessions[0].status, 'running');
   assert.equal(state.accept(event('SubagentStop')), false);
+});
+
+test('a turnless session end closes only its own stopped session', () => {
+  const state = createMultiChatState({ clock: () => new Date(time) });
+  const other = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+  const current = (id) => state.snapshot().sessions.find((item) => item.sessionId === id);
+
+  state.accept(event('UserPromptSubmit'));
+  state.accept(event('UserPromptSubmit', { sessionId: other, project: 'other' }));
+  state.accept(event('Stop'));
+  state.accept(event('Stop', { sessionId: other, project: 'other' }));
+  state.accept(event('SessionEnd', { turnId: null }));
+  assert.equal(current(session).status, 'ended');
+  assert.equal(current(session).turnId, turn);
+  assert.equal(current(other).status, 'idle');
+  assert.equal(current(other).turnId, turn);
+  state.accept(event('SessionEnd', { sessionId: other, project: 'other', turnId: null }));
+  assert.equal(current(other).status, 'ended');
+});
+
+test('turnless session ends remain distinct across a continuous session lifecycle', () => {
+  const state = createMultiChatState({ clock: () => new Date(time) });
+  const at = (increment) => new Date(Date.parse(time) + increment).toISOString();
+  const current = () => state.snapshot().sessions[0];
+
+  state.accept(event('UserPromptSubmit', { at: at(0) }));
+  state.accept(event('SessionEnd', { turnId: null, at: at(1) }));
+  assert.equal(current().status, 'running');
+
+  state.accept(event('Stop', { at: at(2) }));
+  const firstEnd = event('SessionEnd', { turnId: null, at: at(3) });
+  state.accept(firstEnd);
+  assert.equal(current().status, 'ended');
+  const endedSnapshot = state.snapshot();
+  state.accept(firstEnd);
+  assert.deepEqual(state.snapshot(), endedSnapshot);
+
+  state.accept(event('UserPromptSubmit', { turnId: next, at: at(4) }));
+  assert.equal(current().status, 'running');
+  state.accept(event('Stop', { turnId: next, at: at(5) }));
+  assert.equal(current().status, 'idle');
+  state.accept(event('SessionEnd', { turnId: null, at: at(6) }));
+  assert.equal(current().status, 'ended');
+  assert.equal(current().turnId, next);
+});
+
+test('cold-join tool metadata is visible without inventing a current task', () => {
+  const state = createMultiChatState({ clock: () => new Date(time) });
+  const other = 'dddddddd-dddd-dddd-dddd-dddddddddddd';
+  const current = (id = session) => state.snapshot().sessions.find((item) => item.sessionId === id);
+  const assertCard = (toolName, toolUseId) => {
+    const card = current();
+    assert.equal(card.status, 'unknown');
+    assert.equal(card.turnId, null);
+    assert.equal(card.toolName, toolName);
+    assert.equal(card.toolUseId, toolUseId);
+    assert.equal('startedAt' in card, false);
+    assert.equal('taskName' in card, false);
+  };
+
+  state.accept(event('SessionStart', { sessionId: other, turnId: null }));
+  state.accept(event('PreToolUse', { toolName: 'first/tool', toolUseId: 'call-1' }));
+  assertCard('first/tool', 'call-1');
+  assert.equal(current(other).toolName, null);
+  assert.equal(current(other).toolUseId, null);
+  state.accept(event('PostToolUse', { toolName: 'first/tool', toolUseId: null }));
+  assertCard('first/tool', null);
+  state.accept(event('PermissionRequest', { toolName: 'permission/tool', toolUseId: 'call-2' }));
+  assertCard('permission/tool', 'call-2');
+  assert.equal(current(other).status, 'connected');
+  assert.equal(current(other).turnId, null);
+  assert.equal(current(other).toolName, null);
+  assert.equal(current(other).toolUseId, null);
+
+  state.accept(event('UserPromptSubmit', { turnId: next }));
+  state.accept(event('PreToolUse', { turnId: next, toolName: 'normal/tool', toolUseId: 'call-3' }));
+  assert.equal(current().status, 'tool_running');
+  assert.equal(current().turnId, next);
+  assert.equal(current().toolName, 'normal/tool');
+  assert.equal(current().toolUseId, 'call-3');
+  state.accept(event('PostToolUse', { turnId: next, toolName: 'normal/tool', toolUseId: 'call-3' }));
+  assert.equal(current().status, 'running');
+});
+
+test('invalid, old-turn, and subagent tool events cannot overwrite a newer root card', () => {
+  const state = createMultiChatState({ clock: () => new Date(time) });
+  state.accept(event('UserPromptSubmit'));
+  state.accept(event('UserPromptSubmit', { turnId: next }));
+  state.accept(event('PreToolUse', { turnId: next, toolName: 'root/tool', toolUseId: 'root-call' }));
+  const card = () => {
+    const { status, turnId, toolName, toolUseId } = state.snapshot().sessions[0];
+    return { status, turnId, toolName, toolUseId };
+  };
+  const expected = { status: 'tool_running', turnId: next, toolName: 'root/tool', toolUseId: 'root-call' };
+  for (const name of ['PreToolUse', 'PostToolUse', 'PermissionRequest']) {
+    assert.equal(state.accept(event(name, { turnId: next, toolName: 'invalid tool' })), false);
+    state.accept(event(name, { toolName: 'old/tool', toolUseId: `old-${name}` }));
+    state.accept(event(name, {
+      turnId: next, subagent: true, toolName: 'subagent/tool', toolUseId: `sub-${name}`,
+    }));
+    assert.deepEqual(card(), expected);
+  }
 });
 
 test('late pre-tool does not undo returned tool and snapshots are isolated', () => {

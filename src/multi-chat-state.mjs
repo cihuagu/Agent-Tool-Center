@@ -93,7 +93,9 @@ export function createMultiChatState({ clock = () => new Date() } = {}) {
       return true;
     }
 
-    const key = JSON.stringify([event.event, event.turnId, event.toolUseId, event.subagent]);
+    const key = JSON.stringify([event.event, event.turnId, event.toolUseId, event.subagent,
+      ...((event.event === 'SessionStart' || event.event === 'SessionEnd') &&
+        event.turnId === null && event.toolUseId === null ? [event.at] : [])]);
     if (session.seen.includes(key)) return true;
     session.seen.push(key);
     if (session.seen.length > 200) session.seen.shift();
@@ -118,8 +120,12 @@ export function createMultiChatState({ clock = () => new Date() } = {}) {
     } else if (event.event === 'SessionStart' && !session.turnId && session.status === 'unknown') {
       session.status = 'connected';
     } else if (event.event === 'SessionEnd' && !event.subagent &&
-      ((!session.turnId && !event.turnId) || (current && !ACTIVE.has(session.status)))) {
+      !ACTIVE.has(session.status) && (event.turnId === null || current)) {
       session.status = 'ended';
+    } else if (session.turnId === null && !event.subagent &&
+      (event.event === 'PreToolUse' || event.event === 'PostToolUse' || event.event === 'PermissionRequest')) {
+      session.toolName = event.toolName;
+      session.toolUseId = event.toolUseId;
     } else if (current && !closed && !event.subagent) {
       if (event.event === 'PreToolUse') {
         if (!event.toolUseId || !session.returned.includes(event.toolUseId)) {

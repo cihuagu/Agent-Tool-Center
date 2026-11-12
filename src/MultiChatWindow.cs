@@ -434,7 +434,7 @@ internal sealed class MultiChatWindow : Form
                 tiles.Controls.Add(view.Tile);
             }
             string title = (string)Get(session, "project") + " · " +
-                id.Substring(0, 8) + " · " + Status((string)Get(session, "status"));
+                id.Substring(24, 12) + " · " + Status((string)Get(session, "status"));
             if (view.Tab.Text != title) view.Tab.Text = title;
             string details = Details(session);
             SetText(view.TabText, details);
