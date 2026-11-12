@@ -12,10 +12,12 @@ const events = [
 export function createPreview() {
   const entry = path.join(root, 'src', 'multi-chat-hook.mjs');
   const command = `"${process.execPath}" "${entry}"`;
+  const quotePowerShell = (value) => `'${value.replace(/'/g, "''")}'`;
+  const commandWindows = `& ${quotePowerShell(process.execPath)} ${quotePowerShell(entry)}`;
   return {
     description: 'Multi-chat hooks preview for review; not installed automatically.',
     hooks: Object.fromEntries(events.map((event) => [event, [{
-      hooks: [{ type: 'command', command, timeout: 2, async: false }],
+      hooks: [{ type: 'command', command, commandWindows, timeout: 2, async: false }],
     }]])),
   };
 }

@@ -13,7 +13,7 @@ const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
 const cache = path.join(root, '.cache');
 const execFileAsync = promisify(execFile);
 
-async function fixture(t) {
+async function fixture(t, projectBasename = 'project') {
   await mkdir(cache, { recursive: true });
   const directory = await mkdtemp(path.join(cache, 'preview-test-'));
   t.after(async () => {
@@ -21,7 +21,7 @@ async function fixture(t) {
     assert.ok(path.basename(directory).startsWith('preview-test-'));
     await rm(directory, { recursive: true, force: true });
   });
-  const project = path.join(directory, 'project');
+  const project = path.join(directory, projectBasename);
   const outside = path.join(directory, 'outside');
   await mkdir(path.join(project, 'scripts'), { recursive: true });
   await mkdir(outside);
@@ -33,6 +33,33 @@ async function fixture(t) {
 function runPreview(script) {
   return execFileAsync(process.execPath, [script, '--write-preview'], {
     timeout: 2500, windowsHide: true,
+  });
+}
+
+function windowsCommand(node, script) {
+  const quote = (value) => `'${value.replaceAll("'", "''")}'`;
+  return `& ${quote(node)} ${quote(script)}`;
+}
+
+function runPowerShell(command) {
+  assert.ok(process.env.SystemRoot, 'SystemRoot is required to locate Windows PowerShell');
+  const powershell = path.join(
+    process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
+  );
+  return new Promise((resolve, reject) => {
+    const child = execFile(
+      powershell, ['-NoProfile', '-Command', command],
+      { timeout: 2500, windowsHide: true },
+      (error, stdout, stderr) => {
+        if (error && typeof error.code !== 'number') {
+          reject(error);
+          return;
+        }
+        resolve({ code: error ? error.code : 0, stdout, stderr });
+      },
+    );
+    child.stdin.on('error', () => {});
+    child.stdin.end('{}');
   });
 }
 
@@ -175,7 +202,43 @@ test('preview lists only supported hooks with fixed synchronous commands', () =>
     assert.equal(hook.async, false);
     assert.equal(hook.timeout, 2);
     assert.equal(hook.command, `"${process.execPath}" "${path.join(root, 'src', 'multi-chat-hook.mjs')}"`);
+    assert.equal(hook.commandWindows, windowsCommand(process.execPath, path.join(root, 'src', 'multi-chat-hook.mjs')));
     assert.doesNotMatch(hook.command, /dangerously-bypass-hook-trust/);
+  }
+});
+
+test('generated command runs the real hook in Windows PowerShell with invalid input', {
+  skip: process.platform !== 'win32' ? 'Requires Windows PowerShell 5.1' : false,
+}, async () => {
+  const hook = createPreview().hooks.SessionStart[0].hooks[0];
+  const result = await runPowerShell(hook.commandWindows ?? hook.command);
+  assert.equal(result.code, 0);
+  assert.equal(result.stdout, '{}\n');
+  assert.equal(result.stderr, '');
+});
+
+test('generated Windows commands preserve literal fixture paths in PowerShell', {
+  skip: process.platform !== 'win32' ? 'Requires Windows PowerShell 5.1' : false,
+}, async (t) => {
+  const { project, script } = await fixture(t, "project space ' $value &");
+  const entry = path.join(project, 'src', 'multi-chat-hook.mjs');
+  await mkdir(path.dirname(entry), { recursive: true });
+  await writeFile(entry, "process.stdin.resume();\nprocess.stdin.on('end', () => process.stdout.write('{}\\n'));\n");
+  const fixedNode = process.execPath;
+  const { stdout, stderr } = await runPreview(script);
+  assert.equal(stderr, '');
+  const preview = JSON.parse(stdout);
+  const firstHook = preview.hooks.SessionStart[0].hooks[0];
+  const result = await runPowerShell(firstHook.commandWindows ?? firstHook.command);
+  assert.equal(result.code, 0);
+  assert.equal(result.stdout, '{}\n');
+  assert.equal(result.stderr, '');
+  const command = `"${fixedNode}" "${entry}"`;
+  const commandWindows = windowsCommand(fixedNode, entry);
+  for (const groups of Object.values(preview.hooks)) {
+    const hook = groups[0].hooks[0];
+    assert.equal(hook.command, command);
+    assert.equal(hook.commandWindows, commandWindows);
   }
 });
 
@@ -189,6 +252,7 @@ test('preview writes the same JSON only to the intended fixture cache', async (t
   const command = `"${process.execPath}" "${path.join(project, 'src', 'multi-chat-hook.mjs')}"`;
   for (const groups of Object.values(preview.hooks)) {
     assert.equal(groups[0].hooks[0].command, command);
+    assert.equal(groups[0].hooks[0].commandWindows, windowsCommand(process.execPath, path.join(project, 'src', 'multi-chat-hook.mjs')));
   }
 });
 
