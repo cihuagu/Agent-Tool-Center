@@ -121,6 +121,99 @@ test('cold-join tool metadata is visible without inventing a current task', () =
   assert.equal(current().status, 'running');
 });
 
+for (const status of ['idle', 'interrupted', 'ended']) {
+  for (const name of ['PreToolUse', 'PostToolUse', 'PermissionRequest']) {
+    test(`${status}: unanchored root ${name} shows metadata with unknown/null association`, () => {
+      const state = createMultiChatState({ clock: () => new Date(time) });
+      let tick = 0;
+      const send = (name, overrides = {}) => state.accept(event(name, {
+        ...overrides, at: new Date(Date.parse(time) + tick++).toISOString(),
+      }));
+      const card = () => {
+        const { status, turnId, toolName, toolUseId } = state.snapshot().sessions[0];
+        return { status, turnId, toolName, toolUseId };
+      };
+
+      send('UserPromptSubmit');
+      send(status === 'interrupted' ? 'Interrupt' : 'Stop');
+      if (status === 'ended') send('SessionEnd', { turnId: null });
+      const closedCard = { status, turnId: turn, toolName: null, toolUseId: null };
+      assert.deepEqual(card(), closedCard);
+      send(name, {
+        turnId: next, subagent: true, toolName: 'subagent/tool', toolUseId: 'sub-call',
+      });
+      assert.deepEqual(card(), closedCard);
+
+      send(name, { turnId: next, toolName: 'new/tool', toolUseId: 'new-call' });
+      const unassociated = {
+        status: 'unknown', turnId: null, toolName: 'new/tool', toolUseId: 'new-call',
+      };
+      assert.deepEqual(card(), unassociated);
+      assert.equal(state.snapshot().sessions[0].history.filter(
+        (item) => item.event === 'UserPromptSubmit',
+      ).length, 1);
+
+      for (const late of ['PreToolUse', 'PostToolUse', 'PermissionRequest', 'UserPromptSubmit']) {
+        // A distinct call ID keeps the closed prompt assertion out of the dedup path.
+        send(late, { toolName: 'late/tool', toolUseId: `late-${late}` });
+        assert.deepEqual(card(), unassociated);
+        assert.equal(state.snapshot().sessions[0].history.at(-1).event, late);
+      }
+
+      send('UserPromptSubmit', { turnId: next });
+      assert.deepEqual(card(), { status: 'running', turnId: next, toolName: null, toolUseId: null });
+      send('PreToolUse', { turnId: next, toolName: 'current/tool', toolUseId: 'current-call' });
+      assert.deepEqual(card(), {
+        status: 'tool_running', turnId: next, toolName: 'current/tool', toolUseId: 'current-call',
+      });
+      send('PermissionRequest', { turnId: next, toolName: 'current/tool', toolUseId: 'current-call' });
+      assert.equal(card().status, 'waiting');
+      send('PostToolUse', { turnId: next, toolName: 'current/tool', toolUseId: 'current-call' });
+      assert.deepEqual(card(), {
+        status: 'running', turnId: next, toolName: 'current/tool', toolUseId: 'current-call',
+      });
+    });
+  }
+}
+
+for (const status of ['running', 'tool_running', 'waiting']) {
+  test(`${status}: foreign and closed tools cannot overwrite an anchored root card`, () => {
+    const state = createMultiChatState({ clock: () => new Date(time) });
+    const foreign = 'eeeeeeee-eeee-eeee-eeee-eeeeeeeeeeee';
+    let tick = 0;
+    const send = (name, overrides = {}) => state.accept(event(name, {
+      ...overrides, at: new Date(Date.parse(time) + tick++).toISOString(),
+    }));
+    const card = () => {
+      const { status, turnId, toolName, toolUseId } = state.snapshot().sessions[0];
+      return { status, turnId, toolName, toolUseId };
+    };
+    send('UserPromptSubmit');
+    send('UserPromptSubmit', { turnId: next });
+    if (status !== 'running') {
+      send(status === 'waiting' ? 'PermissionRequest' : 'PreToolUse', {
+        turnId: next, toolName: 'root/tool', toolUseId: 'root-call',
+      });
+    }
+    const expected = {
+      status, turnId: next,
+      toolName: status === 'running' ? null : 'root/tool',
+      toolUseId: status === 'running' ? null : 'root-call',
+    };
+    assert.deepEqual(card(), expected);
+    for (const name of ['PreToolUse', 'PostToolUse', 'PermissionRequest']) {
+      for (const turnId of [turn, foreign]) {
+        send(name, { turnId, toolName: 'foreign/tool', toolUseId: `${turnId}-${name}` });
+        assert.deepEqual(card(), expected);
+      }
+      send(name, {
+        turnId: next, subagent: true, toolName: 'subagent/tool', toolUseId: `sub-${name}`,
+      });
+      assert.deepEqual(card(), expected);
+    }
+  });
+}
+
 test('invalid, old-turn, and subagent tool events cannot overwrite a newer root card', () => {
   const state = createMultiChatState({ clock: () => new Date(time) });
   state.accept(event('UserPromptSubmit'));

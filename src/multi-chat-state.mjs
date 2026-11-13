@@ -123,8 +123,14 @@ export function createMultiChatState({ clock = () => new Date() } = {}) {
     } else if (event.event === 'SessionEnd' && !event.subagent &&
       !ACTIVE.has(session.status) && (event.turnId === null || current)) {
       session.status = 'ended';
-    } else if (session.turnId === null && !event.subagent &&
+    } else if (!closed && !event.subagent &&
+      (session.turnId === null ||
+        (!ACTIVE.has(session.status) && session.closedTurns.includes(session.turnId))) &&
       (event.event === 'PreToolUse' || event.event === 'PostToolUse' || event.event === 'PermissionRequest')) {
+      if (session.turnId !== null) {
+        session.status = 'unknown';
+        session.turnId = null;
+      }
       session.toolName = event.toolName;
       session.toolUseId = event.toolUseId;
     } else if (current && !closed && !event.subagent) {
