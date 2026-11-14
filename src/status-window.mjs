@@ -108,11 +108,15 @@ export function createStatusProjection({
     const data = response.structuredContent;
     if (toolName === "compare_capabilities") {
       if (!matches(UUID, data.comparisonId) || !matches(ID, data.taskType) ||
-          !integer(data.catalogRevision) || !["ready", "needs_check"].includes(data.status) ||
+          !integer(data.catalogRevision) || !["ready", "needs_check", "needs_selection"].includes(data.status) ||
           !Array.isArray(data.candidates) || data.candidates.length < 1 ||
           data.candidates.length > 4 || !data.candidates.every(item =>
             object(item) && matches(UUID, item.candidateId) &&
             matches(ID, item.capabilityId) && label(item.name))) return;
+      const pending = data.status === "needs_selection";
+      if (pending && (data.mode !== "manual" || data.selection !== null ||
+          data.candidates.filter(item =>
+            item.fit === "direct" && item.availability === "ready").length < 2)) return;
       if (seen.has(`comparison:${data.comparisonId}`)) return;
       const comparison = {
         comparisonId: data.comparisonId, catalogRevision: data.catalogRevision,
@@ -122,18 +126,19 @@ export function createStatusProjection({
         }))
       };
       if (data.status === "ready" && !select(data.selection, comparison)) return;
-      if (data.status === "needs_check") {
+      if (data.status === "needs_check" || pending) {
         if (data.selection !== null) return;
         current = {
           comparisonId: data.comparisonId, selectionId: null, taskLabel: data.taskType,
           selectedCapabilityId: null, actualCapabilityId: null,
           selectedCapabilityName: null, actualCapabilityName: null,
-          state: "needs_check", reason: "unknown", verification: "agent_reported",
+          state: pending ? "waiting" : "needs_check",
+          reason: pending ? "awaiting_user" : "unknown", verification: "agent_reported",
           startedAt: null, endedAt: null, cancelledAt: null, quality: "not_assessed",
           matchesSelection: null, switchFrom: null, switchFromName: null
         };
         append({
-          source: "agent_reported", state: "needs_check", capabilityId: null,
+          source: "agent_reported", state: current.state, reason: current.reason, capabilityId: null,
           comparisonId: data.comparisonId, receivedAt: received()
         });
       }
@@ -439,7 +444,12 @@ export function createStatusWindow({
   };
 }
 
-export async function createNativeRenderer({ onClose, mode = "single_chat" }) {
+export async function createNativeRenderer({
+  onClose, mode = "single_chat", language = process.env.ATC_UI_LANGUAGE ?? "zh-CN"
+}) {
+  if (language !== "en" && language !== "zh-CN") {
+    throw new Error("STATUS_WINDOW_INVALID_LANGUAGE");
+  }
   if (mode !== "single_chat" && mode !== "multi_chat") {
     throw new Error("STATUS_WINDOW_INVALID_MODE");
   }
@@ -479,7 +489,10 @@ export async function createNativeRenderer({ onClose, mode = "single_chat" }) {
     }, error => error ? reject(new Error("STATUS_WINDOW_COMPILE_FAILED")) : resolve());
   });
 
-  const child = spawn(executable, [], { windowsHide: false, stdio: ["pipe", "pipe", "pipe"] });
+  const child = spawn(executable, [], {
+    windowsHide: false, stdio: ["pipe", "pipe", "pipe"],
+    env: { ...process.env, ATC_UI_LANGUAGE: language }
+  });
   let closed = false;
   let notified = false;
   let blocked = false;

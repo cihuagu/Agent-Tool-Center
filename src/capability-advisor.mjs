@@ -9,6 +9,7 @@ const SOURCE_ID = new RegExp(SOURCE_ID_PATTERN);
 const NAME = new RegExp(NAME_PATTERN, "u");
 const KINDS = ["native", "plugin", "skill", "cli"];
 const AVAILABILITY = ["ready", "unavailable", "not_checked"];
+const MODES = ["manual", "recommend", "auto"];
 const REASONS = ["user_requested", "agent_auto"];
 const OUTCOMES = ["succeeded", "failed", "not_run"];
 const QUALITY = ["not_assessed", "meets_requirement", "does_not_meet"];
@@ -161,6 +162,10 @@ export const CAPABILITY_ADVISOR_TOOLS = [
       type: "object",
       properties: {
         taskType: { ...safeIdSchema },
+        mode: {
+          type: "string", enum: [...MODES],
+          description: "当前聊天本次比较模式；省略为 auto。manual 有至少两个直接适用且自报 ready 的候选时等待用户选择；recommend 先解释路由再继续，auto 直接继续；不执行或扩大权限。"
+        },
         candidates: {
           type: "array",
           minItems: 1,
@@ -336,7 +341,8 @@ function validList(args) {
 }
 
 function validCompare(args, catalog, reservedIds) {
-  if (!strictObject(args, ["taskType", "candidates"]) ||
+  if (!strictObject(args, ["taskType", "candidates"], ["mode"]) ||
+      (Object.hasOwn(args, "mode") && !MODES.includes(args.mode)) ||
       !isSafeId(args.taskType) || !Array.isArray(args.candidates) ||
       args.candidates.length < 1 || args.candidates.length > 4) return false;
   const seen = new Set();
@@ -485,6 +491,7 @@ export function createCapabilityAdvisor() {
   }
 
   function compare(args) {
+    const mode = args.mode ?? "auto";
     const candidates = args.candidates.map(item => {
       const entry = catalog.get(item.capabilityId);
       const direct = entry.taskTypes.includes(args.taskType) && entry.execution.type !== "instruction_only";
@@ -511,9 +518,13 @@ export function createCapabilityAdvisor() {
           : "目录收录与执行绑定仅为描述，不授予执行权限；适用任务、可用性与绑定未经本助手核验，文件操作成功不能证明界面可用。Skill 需要加载指令并核验实际入口。"
       };
     });
+    const eligible = candidates.filter(item => item.fit === "direct" && item.availability === "ready");
+    const needsSelection = mode === "manual" && eligible.length >= 2;
     const comparisonId = randomUUID();
     comparisons.set(comparisonId, {
       candidates,
+      mode,
+      needsSelection,
       catalogRevision,
       capabilityIds: new Set(catalog.keys()),
       executableIds: new Set([...catalog.values()]
@@ -527,8 +538,7 @@ export function createCapabilityAdvisor() {
         if (selection.comparisonId === oldest) removeSelection(id);
       }
     }
-    const recommended = candidates
-      .filter(item => item.fit === "direct" && item.availability === "ready")
+    const recommended = eligible
       .sort((first, second) =>
         catalog.get(first.capabilityId).priority - catalog.get(second.capabilityId).priority ||
         asciiOrder(first.capabilityId, second.capabilityId))[0];
@@ -536,11 +546,12 @@ export function createCapabilityAdvisor() {
       comparisonId,
       catalogRevision,
       taskType: args.taskType,
-      status: recommended ? "ready" : "needs_check",
+      mode,
+      status: needsSelection ? "needs_selection" : recommended ? "ready" : "needs_check",
       candidates,
       recommendedCandidateId: recommended?.candidateId ?? null,
-      selection: recommended ? addSelection(comparisonId, recommended, "agent_auto") : null,
-      explanation: `${recommended ? "" : "没有直接适用且自报 ready 的候选，需要宿主检查。"}按目录优先值升序、相同值按能力标识 ASCII 顺序选择；这是路由默认值，不是速度、准确率或质量排名；本助手未探测可用性。`
+      selection: recommended && !needsSelection ? addSelection(comparisonId, recommended, "agent_auto") : null,
+      explanation: `${needsSelection ? "有多个直接适用且自报 ready 的候选，等待用户选择，不执行。" : recommended ? "" : "没有直接适用且自报 ready 的候选，需要宿主检查。"}按目录优先值升序、相同值按能力标识 ASCII 顺序选择；这是路由默认值，不是速度、准确率或质量排名；本助手未探测可用性。`
     });
   }
 
@@ -553,6 +564,9 @@ export function createCapabilityAdvisor() {
     }
     if (candidate.fit !== "direct") return failure(422, "候选不直接适用于本次任务，不能选择。");
     if (candidate.availability !== "ready") return failure(422, "候选自报不可用或尚未核验，不能选择。");
+    if (comparison.mode === "manual" && comparison.needsSelection && args.reason === "agent_auto") {
+      return failure(422, "本次手动比较有多个可选入口，需要用户选择，不能自动换选。");
+    }
     return result({ selection: addSelection(args.comparisonId, candidate, args.reason) });
   }
 

@@ -1,5 +1,8 @@
 import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
+import * as fs from "node:fs/promises";
+import { isAbsolute, join, relative, resolve, sep } from "node:path";
+import { randomUUID } from "node:crypto";
 
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const TOOLS = new Set([
@@ -40,12 +43,110 @@ function createTransport({ threadId }) {
 export function createDesktopChatSession({
   threadId,
   clientFactory = createClient,
-  transportFactory = createTransport
+  transportFactory = createTransport,
+  modeStateDirectory = join(project, ".cache", "desktop-chat-modes")
 } = {}) {
   if (typeof threadId !== "string" || threadId.length !== 36 || !UUID.test(threadId)) {
     throw failure("INVALID_DESKTOP_THREAD");
   }
   const id = threadId.toLowerCase();
+  const modes = new Set(["manual", "recommend", "auto"]);
+  const cache = resolve(project, ".cache");
+  if (typeof modeStateDirectory !== "string") {
+    throw failure("DESKTOP_MODE_STORAGE_FAILED");
+  }
+  const directory = resolve(modeStateDirectory);
+  const withinCache = relative(cache, directory);
+  if (isAbsolute(withinCache) || withinCache === ".." || withinCache.startsWith(`..${sep}`)) {
+    throw failure("DESKTOP_MODE_STORAGE_FAILED");
+  }
+  const record = join(directory, `${id}.json`);
+  const modeSnapshot = mode => ({ mode, scope: "current_chat", threadId: id });
+
+  async function checkDirectory(create) {
+    let current = project;
+    for (const part of relative(project, directory).split(sep)) {
+      current = join(current, part);
+      let stat;
+      try {
+        stat = await fs.lstat(current);
+      } catch (error) {
+        if (error.code !== "ENOENT") throw error;
+        if (!create) return false;
+        try {
+          await fs.mkdir(current);
+        } catch (error) {
+          if (error.code !== "EEXIST") throw error;
+        }
+        stat = await fs.lstat(current);
+      }
+      if (stat.isSymbolicLink() || !stat.isDirectory()) {
+        throw failure("DESKTOP_MODE_STORAGE_FAILED");
+      }
+    }
+    return true;
+  }
+
+  async function readMode() {
+    if (!await checkDirectory(false)) return "auto";
+    let stat;
+    try {
+      stat = await fs.lstat(record);
+    } catch (error) {
+      if (error.code === "ENOENT") return "auto";
+      throw error;
+    }
+    if (stat.isSymbolicLink() || !stat.isFile() || stat.nlink !== 1) {
+      throw failure("DESKTOP_MODE_STORAGE_FAILED");
+    }
+    const state = JSON.parse(await fs.readFile(record, "utf8"));
+    if (!state || Array.isArray(state) || state.version !== 1 ||
+        !modes.has(state.mode) || Object.keys(state).length !== 2) {
+      throw failure("DESKTOP_MODE_STORAGE_FAILED");
+    }
+    return state.mode;
+  }
+
+  async function getMode() {
+    try {
+      return modeSnapshot(await readMode());
+    } catch {
+      throw failure("DESKTOP_MODE_STORAGE_FAILED");
+    }
+  }
+
+  async function setMode(mode) {
+    if (!modes.has(mode)) throw failure("DESKTOP_MODE_INVALID");
+    let temporary;
+    let handle;
+    try {
+      await checkDirectory(true);
+      await readMode();
+      const candidate = join(directory, `.${id}.${randomUUID()}.tmp`);
+      handle = await fs.open(candidate, "wx", 0o600);
+      temporary = candidate;
+      await handle.writeFile(JSON.stringify({ version: 1, mode }), "utf8");
+      await handle.close();
+      handle = undefined;
+      // Recheck the destination before replacing an existing record.
+      await readMode();
+      await fs.rename(temporary, record);
+      temporary = undefined;
+      return modeSnapshot(mode);
+    } catch {
+      throw failure("DESKTOP_MODE_STORAGE_FAILED");
+    } finally {
+      let cleanupFailed = false;
+      if (handle) {
+        try { await handle.close(); } catch { cleanupFailed = true; }
+      }
+      if (temporary) {
+        try { await fs.unlink(temporary); } catch { cleanupFailed = true; }
+      }
+      if (cleanupFailed) throw failure("DESKTOP_MODE_STORAGE_FAILED");
+    }
+  }
+
   const getBinding = () => ({
     threadId: id, bindingSource: "host_tool_context", controlLevel: "advice_only"
   });
@@ -126,12 +227,19 @@ export function createDesktopChatSession({
   }
 
   return {
-    getBinding, start, close,
+    getBinding, start, close, getMode, setMode,
     async call(name, args) {
       if (typeof name !== "string" || !TOOLS.has(name)) {
         throw failure("DESKTOP_TOOL_NOT_ALLOWED");
       }
       if (closed) throw failure("DESKTOP_SESSION_CLOSED");
+      if (name === "compare_capabilities") {
+        const { mode } = await getMode();
+        if (args != null && Object.hasOwn(args, "mode") && args.mode !== mode) {
+          throw failure("DESKTOP_MODE_CONFLICT");
+        }
+        args = { ...args, mode };
+      }
       await start();
       if (closed) throw failure("DESKTOP_SESSION_CLOSED");
       try {

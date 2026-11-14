@@ -1,7 +1,11 @@
 import test from "node:test";
 import assert from "node:assert/strict";
+import { mkdirSync, mkdtempSync, rmSync } from "node:fs";
+import { join } from "node:path";
+import { fileURLToPath } from "node:url";
 import { createDesktopChatSession } from "../src/desktop-chat-session.mjs";
 
+const CACHE = fileURLToPath(new URL("../.cache/", import.meta.url));
 const THREAD = "18610d20-1848-4d5c-9a60-a479b8e7ebcc";
 const OTHER_THREAD = "01a1b903-df4b-7fa2-becf-0f84ea899391";
 const MARKER = "PRIVATE_SESSION_DIAGNOSTIC";
@@ -21,6 +25,8 @@ function deferred() {
 }
 
 function fixture({ threadId = THREAD, connect, names = TOOLS } = {}) {
+  mkdirSync(CACHE, { recursive: true });
+  const modeStateDirectory = mkdtempSync(join(CACHE, "desktop-session-test-"));
   const calls = [];
   const response = {
     isError: true,
@@ -42,12 +48,21 @@ function fixture({ threadId = THREAD, connect, names = TOOLS } = {}) {
   };
   const session = createDesktopChatSession({
     threadId,
+    modeStateDirectory,
     clientFactory() { calls.push(["clientFactory"]); return client; },
     transportFactory(options) {
       calls.push(["transportFactory", options]);
       return transport;
     }
   });
+  const close = session.close;
+  session.close = async () => {
+    try {
+      return await close();
+    } finally {
+      rmSync(modeStateDirectory, { recursive: true, force: true });
+    }
+  };
   return { session, calls, response, client, transport };
 }
 
@@ -127,7 +142,10 @@ test("desktop session permits exactly six tools and preserves server validation 
       const args = { unknownBusinessField: { value: MARKER }, capabilities: [] };
       const response = await f.session.call(name, args);
       assert.deepEqual(response, f.response);
-      assert.deepEqual(f.calls.at(-1), ["callTool", { name, arguments: args }]);
+      assert.deepEqual(f.calls.at(-1), ["callTool", {
+        name,
+        arguments: name === "compare_capabilities" ? { ...args, mode: "auto" } : args
+      }]);
       assert.deepEqual(args, { unknownBusinessField: { value: MARKER }, capabilities: [] });
     }
     assert.equal(f.calls.filter(([name]) => name === "connect").length, 1);

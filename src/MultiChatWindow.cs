@@ -11,6 +11,14 @@ using System.Windows.Forms;
 
 internal sealed class MultiChatWindow : Form
 {
+    private static readonly bool English =
+        Environment.GetEnvironmentVariable("ATC_UI_LANGUAGE") == "en";
+
+    private static string T(string en, string zh)
+    {
+        return English ? en : zh;
+    }
+
     private const int FrameLimit = 256 * 1024;
     private const long MaxSafeInteger = 9007199254740991L;
     private static readonly UTF8Encoding Utf8 = new UTF8Encoding(false, true);
@@ -35,6 +43,7 @@ internal sealed class MultiChatWindow : Form
 
     private readonly TabControl tabs = new TabControl();
     private readonly FlowLayoutPanel tiles = new FlowLayoutPanel();
+    private readonly RadioButton tileMode = new RadioButton();
     private readonly Label empty = new Label();
     private readonly Label capacity = new Label();
     private readonly Dictionary<string, SessionView> views =
@@ -73,7 +82,7 @@ internal sealed class MultiChatWindow : Form
 
     private MultiChatWindow()
     {
-        Text = "多聊天状态";
+        Text = T("Multi-chat status", "多聊天状态");
         AutoScaleMode = AutoScaleMode.Dpi;
         FormBorderStyle = FormBorderStyle.Sizable;
         ClientSize = new Size(900, 680);
@@ -84,26 +93,35 @@ internal sealed class MultiChatWindow : Form
 
         FlowLayoutPanel header = new FlowLayoutPanel();
         header.Dock = DockStyle.Top;
-        header.Height = 72;
+        header.AutoSize = true;
+        header.AutoSizeMode = AutoSizeMode.GrowAndShrink;
+        header.MinimumSize = new Size(0, 72);
         header.WrapContents = true;
         RadioButton tabMode = new RadioButton();
-        tabMode.Text = "标签视图";
+        tabMode.Text = T("Tab view", "标签视图");
         tabMode.AutoSize = true;
-        RadioButton tileMode = new RadioButton();
-        tileMode.Text = "并排视图";
+        tileMode.Text = T("Tiled view", "并排视图");
         tileMode.AutoSize = true;
         tileMode.Checked = true;
         CheckBox top = new CheckBox();
-        top.Text = "置顶";
+        top.Text = T("Always on top", "置顶");
         top.AutoSize = true;
         top.Checked = true;
         top.CheckedChanged += delegate { TopMost = top.Checked; };
         Label badge = new Label();
-        badge.Text = "本机 Hook 元数据自报 / 不作为身份认证或权限依据";
+        badge.Text = T("Local Hook metadata self-report / not proof of identity or permission",
+            "本机 Hook 元数据自报 / 不作为身份认证或权限依据");
         badge.AutoSize = true;
+        badge.MaximumSize = new Size(540, 0);
         badge.Margin = new Padding(12, 4, 4, 4);
         capacity.AutoSize = true;
         capacity.Margin = new Padding(12, 4, 4, 4);
+        header.SizeChanged += delegate {
+            badge.MaximumSize = new Size(Math.Max(1,
+                header.ClientSize.Width - header.Padding.Horizontal - badge.Margin.Horizontal), 0);
+            capacity.MaximumSize = new Size(Math.Max(1,
+                header.ClientSize.Width - header.Padding.Horizontal - capacity.Margin.Horizontal), 0);
+        };
         header.Controls.AddRange(new Control[] { tabMode, tileMode, top, badge, capacity });
 
         Panel content = new Panel();
@@ -153,7 +171,8 @@ internal sealed class MultiChatWindow : Form
         };
         empty.Dock = DockStyle.Fill;
         empty.TextAlign = ContentAlignment.MiddleCenter;
-        empty.Text = "等待聊天事件\r\n请确认 Codex Hooks 已加载并通过审核";
+        empty.Text = T("Waiting for chat events\r\nConfirm that Codex Hooks are loaded and approved",
+            "等待聊天事件\r\n请确认 Codex Hooks 已加载并通过审核");
         content.Controls.Add(tabs);
         content.Controls.Add(tiles);
         content.Controls.Add(empty);
@@ -162,13 +181,11 @@ internal sealed class MultiChatWindow : Form
 
         tabMode.CheckedChanged += delegate {
             if (!tabMode.Checked) return;
-            tabs.Visible = views.Count != 0;
-            tiles.Visible = false;
+            UpdateViewMode();
         };
         tileMode.CheckedChanged += delegate {
             if (!tileMode.Checked) return;
-            tabs.Visible = false;
-            tiles.Visible = views.Count != 0;
+            UpdateViewMode();
         };
         Shown += delegate {
             Thread reader = new Thread(ReadInput);
@@ -178,6 +195,27 @@ internal sealed class MultiChatWindow : Form
         FormClosed += delegate {
             lock (gate) { closing = true; latest = null; }
         };
+    }
+
+    private void UpdateViewMode()
+    {
+        Control next = tileMode.Checked ? (Control)tiles : tabs;
+        Control previous = tileMode.Checked ? (Control)tabs : tiles;
+        previous.Visible = false;
+        bool hasSessions = views.Count != 0;
+        empty.Visible = !hasSessions;
+        if (!hasSessions)
+        {
+            next.Visible = false;
+            return;
+        }
+        if (!next.Visible)
+        {
+            next.Parent.PerformLayout();
+            next.Bounds = next.Parent.DisplayRectangle;
+            next.Visible = true;
+            next.PerformLayout();
+        }
     }
 
     private static TextBox MakeTextBox()
@@ -447,22 +485,10 @@ internal sealed class MultiChatWindow : Form
             tiles.AutoScrollPosition.Y != tileScroll.Y)
             tiles.AutoScrollPosition = new Point(-tileScroll.X, -tileScroll.Y);
 
-        bool hasSessions = sessions.Length != 0;
-        empty.Visible = !hasSessions;
-        if (hasSessions)
-        {
-            bool tileMode = false;
-            foreach (Control control in ((FlowLayoutPanel)Controls[1]).Controls)
-            {
-                RadioButton radio = control as RadioButton;
-                if (radio != null && radio.Text == "并排视图") tileMode = radio.Checked;
-            }
-            tabs.Visible = !tileMode;
-            tiles.Visible = tileMode;
-        }
-        else { tabs.Visible = false; tiles.Visible = false; }
+        UpdateViewMode();
         Dictionary<string, object> cap = Map(Get(snapshot, "capacity"));
-        capacity.Text = (bool)Get(cap, "full") ? "会话容量已满（16）" : "";
+        capacity.Text = (bool)Get(cap, "full")
+            ? T("Session capacity reached (16)", "会话容量已满（16）") : "";
         if (activate)
         {
             if (WindowState == FormWindowState.Minimized) WindowState = FormWindowState.Normal;
@@ -483,43 +509,45 @@ internal sealed class MultiChatWindow : Form
     {
         switch (status)
         {
-            case "connected": return "已连接";
-            case "running": return "运行中";
-            case "tool_running": return "工具调用中";
-            case "waiting": return "等待审批";
-            case "idle": return "空闲";
-            case "interrupted": return "已中断";
-            case "ended": return "已结束";
-            default: return "状态未知";
+            case "connected": return T("Connected", "已连接");
+            case "running": return T("Running", "运行中");
+            case "tool_running": return T("Tool call in progress", "工具调用中");
+            case "waiting": return T("Waiting for approval", "等待审批");
+            case "idle": return T("Idle", "空闲");
+            case "interrupted": return T("Interrupted", "已中断");
+            case "ended": return T("Ended", "已结束");
+            default: return T("Unknown", "状态未知");
         }
     }
 
     private static string Value(Dictionary<string, object> data, string key)
     {
-        return Get(data, key) as string ?? "未知";
+        return Get(data, key) as string ?? T("Unknown", "未知");
     }
 
     private static string Details(Dictionary<string, object> session)
     {
         string id = (string)Get(session, "sessionId");
         StringBuilder text = new StringBuilder();
-        text.AppendLine("任务名称：未知");
-        text.AppendLine("项目：" + Value(session, "project"));
-        text.AppendLine("会话：" + id.Substring(0, 8) + " · 完整 ID：" + id);
-        text.AppendLine("状态：" + Status((string)Get(session, "status")));
-        text.AppendLine("最近接收：" + Value(session, "lastSeen"));
-        text.AppendLine("最近工具：" + Value(session, "toolName"));
-        text.AppendLine("工具调用 ID：" + Value(session, "toolUseId"));
-        text.AppendLine("轮次 ID：" + Value(session, "turnId"));
-        text.AppendLine("事件记录：");
+        text.AppendLine(T("Task name: Unknown", "任务名称：未知"));
+        text.AppendLine(T("Project: ", "项目：") + Value(session, "project"));
+        text.AppendLine(T("Session: ", "会话：") + id.Substring(0, 8) +
+            T(" · Full ID: ", " · 完整 ID：") + id);
+        text.AppendLine(T("Status: ", "状态：") + Status((string)Get(session, "status")));
+        text.AppendLine(T("Last received: ", "最近接收：") + Value(session, "lastSeen"));
+        text.AppendLine(T("Latest tool: ", "最近工具：") + Value(session, "toolName"));
+        text.AppendLine(T("Tool call ID: ", "工具调用 ID：") + Value(session, "toolUseId"));
+        text.AppendLine(T("Turn ID: ", "轮次 ID：") + Value(session, "turnId"));
+        text.AppendLine(T("Event history:", "事件记录："));
         foreach (object entry in (object[])Get(session, "history"))
         {
             Dictionary<string, object> item = Map(entry);
             string name = Value(item, "event");
             text.AppendLine(Value(item, "at") + " · " + name +
-                (name == "PostToolUse" ? "（已返回，不代表成功）" : ""));
-            text.AppendLine("  工具：" + Value(item, "toolName") +
-                " · 调用 ID：" + Value(item, "toolUseId"));
+                (name == "PostToolUse"
+                    ? T(" (Returned, does not mean success)", "（已返回，不代表成功）") : ""));
+            text.AppendLine(T("  Tool: ", "  工具：") + Value(item, "toolName") +
+                T(" · Call ID: ", " · 调用 ID：") + Value(item, "toolUseId"));
         }
         return text.ToString();
     }

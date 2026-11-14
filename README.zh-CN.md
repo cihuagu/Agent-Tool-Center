@@ -2,95 +2,138 @@
 
 [English](README.md) | [简体中文](README.zh-CN.md)
 
-Agent Tool Center 帮助 Agent 从有界元数据目录中比较相似的工具、
-插件和 Skills，遵循用户选择，并报告工作情况。
-项目还提供实验性的 Windows 窗口，展示受支持的 Codex 元数据。
+**比较相似工具，决定何时人工介入，并核对实际采用了哪个入口。**
 
-ChatGPT 集成：尚未实现。
+Agent Tool Center 是优先在本地运行的能力选择助手，支持自动、解释推荐后继续、
+人工选择三种模式，分别记录选择与 Agent 的采用报告。可选 Windows 原生窗口
+展示受支持的 Codex 活动元数据，并与 Agent 自报区分。
 
-目录使用确定性的默认路由，默认顺序不是质量排名；
-助手不调用付费推荐模型。
+## 先体验，再配置宿主
 
-## 主要功能
+准备 **Node.js 22 或更新版本**和 Git：
 
-- 比较相关候选，并选择符合条件且已就绪的条目。
-- 按用户要求，在同一次比较的候选中换选。
-- 记录 Agent 自报的任务状态、能力使用、结果和质量。
-- 在只读窗口中展示可获得的本地 Codex 观察元数据。
+```sh
+git clone https://github.com/cihuagu/Agent-Tool-Center.git
+cd Agent-Tool-Center
+node scripts/demo-capability-choice.mjs --mode manual
+```
+
+输入 **A** 或 **B** 并回车：A 使用 `readFile`，B 使用 `createReadStream` 与
+`readline`。选定后，只有所选入口读取当前检出的 README 前三行。最后一行 JSON
+给出所选／实际能力 ID、采用一致性、行数与 SHA-256 摘要。
+输入 `q` 取消；空输入、无效输入或 EOF 都不会执行任一读取入口。
+
+这次读取真实经过已有能力助手，**无需 npm install、账号、API key 或 Hook 配置**。
+它使用独立内存目录，不连接 Codex、不发现已安装插件，也不改变当前聊天模式。
+可用性和采用报告仍由脚本／Agent 自报；质量保持 `not_assessed`（未评估），
+不冒充用户满意度。
+
+不传 `--mode` 时自动选路；传 `--mode recommend` 时先解释现有确定性路由，再继续执行。
+
+## 决定何时人工介入
+
+| 模式 | 有多个相关且已就绪候选时 |
+| --- | --- |
+| `auto`（默认） | 按现有默认路由选择并继续。 |
+| `recommend` | 先解释推荐依据，再继续，无需确认本次选择。 |
+| `manual` | 在执行所选操作前停下，等待用户选择。 |
+
+在已经连接的**当前聊天桌面桥**中，可以直接说“切换到人工／推荐／自动模式”
+或“当前模式”。Agent 必须实际调用并读回结果。模式按项目和宿主聊天 UUID
+保存在本地，正常重连后保留。原始 stdio 接口和本地演示按次比较／运行传模式，
+不读取聊天的模式记录。
+
+默认路由由目录优先值确定，**不是质量排名**；没有调用付费推荐模型。
+选择模式不授予执行权限，也不替代宿主审批。
+
+## 当前支持范围
+
+| 入口 | 前提 | 范围 |
+| --- | --- | --- |
+| 上述本地演示 | Node 22+ | 两个固定本地读取入口，不连接宿主。 |
+| 六工具 stdio 助手 | Node 22+、锁文件中的 npm 依赖 | 有界会话目录、比较、换选、状态与采用报告。 |
+| 当前桌面聊天 | 受支持的持久 `node_repl`、可信宿主 UUID、项目依赖 | 显式连接项目客户端，保存当前聊天模式。 |
+| 单聊／常驻窗口 | Windows、已有 .NET Framework WinForms 编译器；真实活动需受支持观察源 | 实验性只读显示，支持中英文；未提供 macOS/Linux 原生 GUI。 |
+| JSON Hook 维护 | 明确目标、已审阅计划、宿主支持的信任；apply 需要 Windows | 安装／更新／卸载／回退计划、受保护备份、漂移检查与收据。 |
+| 可选本地面板 | Node 和依赖；`npm run dev` | `127.0.0.1:4173` 上独立的受控 Git/Node 示例执行器。 |
+| ChatGPT 接入 | — | 尚未实现。 |
 
 六个元数据工具是 `list_capabilities`、`refresh_capabilities`、
-`compare_capabilities`、`select_capability`、`report_task_status`
-和 `report_capability_use`。它们不执行选中的能力，也不改变宿主权限。
-实际工作仍由宿主工具或已加载的方法型 Skill 完成。
-方法型 Skill 是 Agent 使用的指令，不是 MCP 或 CLI 可执行入口。
-目录条目、可用性、使用情况和质量均由 Agent 自报。
+`compare_capabilities`、`select_capability`、`report_task_status`、
+`report_capability_use`。它们**不执行所选能力**；实际操作由 Agent 调用真实宿主
+工具，或按已加载的方法型 Skill 指令完成。方法型 Skill 是 Agent 使用的指令，
+不是 MCP 或 CLI 可执行端点。
 
-## 环境与安装
+## 可选原生状态窗
 
-- Node.js 22 或更高版本，以及 npm。
-- 在使用 Git 示例时需要 Git。
-- Windows 原生窗口需要已有的 .NET Framework WinForms 和 `csc`。
-- Codex 聊天入口和观察功能需要已安装并登录的 Codex CLI；
-  Windows 聊天启动入口需要 PATH 中存在 `codex.cmd`。
+![使用合成演示数据的英文原生状态窗](docs/assets/status-window-demo.png)
 
-克隆[源代码仓库](https://github.com/cihuagu/Agent-Tool-Center)，
-进入检出目录后运行：
+*真实 Windows 窗口，使用合成示例数据；真实宿主观察未连接。此图展示布局，
+不是真实 Codex 调用证据。*
+单聊浮窗提供“隐藏已结束”和“关闭浮窗”。这些控件影响显示，不结束聊天或
+改变权限；关闭后不会自动重开。
+
+## 接入真实工作流
+
+在检出目录安装已有锁文件依赖：
 
 ```sh
 npm ci --ignore-scripts --no-audit --no-fund --cache .cache/npm-cache
-npm test
+node scripts/doctor.mjs
 ```
 
-锁定的根依赖包含以 `@modelcontextprotocol/sdk-v1` 为别名的官方 MCP SDK。
-安装不会安装 Codex 或 .NET。可选 MCPHub fixture 未单独准备时可能跳过。
-原生界面为实验性功能，以中文为主；英文界面和国际化尚未完成。
-项目不承诺提供 macOS 或 Linux 原生图形界面。
+诊断不会安装、启动或修复任何组件。文件存在、管理器可达，不代表宿主信任或
+事件投递已经成立；`unknown` 会如实保留。其他系统缺少 Windows 专属条件时，
+会明确报告。详见[诊断说明](docs/USAGE.md#read-only-diagnostics)。
 
-## Windows 启动入口
+已有的受支持桌面聊天见[当前聊天桥接指南](docs/DESKTOP_BRIDGE.md)。每次使用前
+检查宿主提供的真实 UUID 与绑定，不注册全局插件、不另开聊天。
 
-以下入口位于检出目录根部，均无需浏览器：
+Windows 检出根目录入口：
 
-| 入口 | 作用 |
+| 入口 | 行为 |
 | --- | --- |
-| `启动能力选择聊天.cmd` | 在终端中启动带元数据助手的新 Codex CLI 聊天。 |
-| `启动悬浮状态聊天.cmd` | 在终端中启动新 CLI 聊天，并启用单聊天原生窗口。 |
-| `启动多聊天管理器.vbs` | 启动独立常驻管理器及原生主窗，不打开终端。 |
+| `启动能力选择聊天.cmd` | 在终端中新开带能力助手的 Codex CLI 聊天。 |
+| `启动悬浮状态聊天.cmd` | 新开 CLI 聊天并启用可选的单聊原生窗。 |
+| `启动多聊天管理器.vbs` | 启动独立常驻管理器和原生主窗，不打开终端。 |
 
-可以要求 Agent 比较相关候选，或换选已就绪的候选。
-实际宿主操作及其结果应与 Agent 报告分别核对。
-单聊天窗口默认不连接真实观察源；观察需要明确可信的当前线程绑定
-或受支持的桥接。
+聊天启动器需要另行安装并认证的 Codex CLI；Windows 入口需要 PATH 中存在
+`codex.cmd`。安装项目依赖不会安装 Codex 或 .NET。常驻管理器只显示 Hook
+元数据，不是全局六工具服务；打开窗口不等于连接全部聊天。
 
-常驻管理器独立于 `node_repl`，只展示 Hook 元数据，
-不是全局六工具服务。重复启动会复用已有管理器。
-标签、平铺、拖动、置顶只控制显示。
-关闭管理器只停止其自有资源，不终止 Codex 聊天；后续 Hook 不会重启它。
-
-## Hook 与观察
-
-在检出目录预览受支持的 Hook 条目：
+只预览支持的 Hook，不执行安装：
 
 ```sh
 node scripts/preview-multi-chat-hooks.mjs
 ```
 
-预览不会安装 Hook 或授予信任。安装需要用户单独审阅，
-通过受支持的宿主机制安装，并取得宿主官方信任。
-需检查具体宿主及版本是否支持；没有有效来源时窗口可能为空或显示未知。
+实际修改全局配置前，先审阅具体目标变更，再使用宿主支持的审阅／信任流程。
+详见[安装与维护](docs/INSTALLATION.md)。当前维护验证包括隔离夹具与真实文件
+预览，不能据此保证各宿主、各版本的真实全局卸载／恢复均已通过。
 
-观察范围取决于宿主及其提供的事件。调用返回不代表业务成功。
-Hook 原始输入可能包含敏感内容；发射器仅保留允许的元数据用于显示和 IPC。
-本地 IPC 未认证：其他本地进程可能伪造状态、读取元数据或干扰管理器。
-实际权限仍由宿主控制。安装、隐私与限制详见[使用指南](docs/USAGE.md)。
+## 使用边界
 
-## 可选本地面板
+- 目录条目、就绪状态、采用与质量由 Agent 自报。收录不代表安装或可用；
+  调用返回不代表产物满足任务要求。
+- 外部刷新原子替换完整的有界会话快照。当前目录总量最多 256，比较最多 4 个
+  候选；不是全盘扫描，也不承诺看见 Codex 全部内部工具。
+- 真实观察和 Agent 自报分开。外层 `exec`、`node_repl` 保留外层名称，
+  不解析代码字符串猜测内部插件。观察覆盖取决于宿主与版本。
+- Hook 显示只保留白名单元数据，不保留原始提示或工具正文。本地 IPC 尚未认证，
+  其他本地进程可能伪造或读取元数据；宿主权限与审批仍是执行依据。
 
-`npm run dev` 启动独立的回环面板 `http://127.0.0.1:4173`。
-它有独立的受控 Git/Node 白名单及审批执行器，不是上述入口的必需项，
-也不会与其目录同步。
+详见[使用与隐私说明](docs/USAGE.md)和[安全说明](SECURITY.md)。
 
-## 文档与许可证
+## 一起改进
 
-- [使用指南](docs/USAGE.md)和[文档索引](docs/README.md)
-- [贡献指南](CONTRIBUTING.md)和[安全说明](SECURITY.md)
-- [MIT 许可证](LICENSE)和[第三方声明](THIRD_PARTY_NOTICES.md)
+欢迎带来真实的相近工具选择场景：你原本期待什么、选了哪个入口、结果是否有用。
+首次运行的复现步骤、聚焦的宿主兼容修复和任务样例都很有帮助。
+请不要把凭证、私人聊天、原始 Hook 输入或个人缓存放进 issue／PR。
+
+开发验证在安装依赖后运行 `npm test`。进程与原生测试串行运行，可能需要数分钟；
+未准备可选 MCPHub 资源时会跳过相关测试，平台专属跳过也会明确报告。
+CI 配置面向 Ubuntu／Windows 的 Node 22；仅加入 workflow 不代表远端已经通过。
+
+- [公开路线](docs/ROADMAP.md) · [参与贡献](CONTRIBUTING.md)
+- [文档目录](docs/README.md) · [使用指南](docs/USAGE.md)
+- [MIT 许可证](LICENSE) · [第三方声明](THIRD_PARTY_NOTICES.md)

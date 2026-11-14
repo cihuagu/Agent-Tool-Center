@@ -5,11 +5,16 @@
 Install Node.js 22 or later and Git. From the project root, install dependencies using the committed lockfile and run the tests:
 
 ```sh
-npm ci
+npm ci --ignore-scripts --no-audit --no-fund --cache .cache/npm-cache
 npm test
 ```
 
 Process and native integration tests run serially to avoid resource contention.
+For a dependency-free first run, use
+`node scripts/demo-capability-choice.mjs --mode manual` before installing.
+Choose A or B explicitly; cancel or EOF performs no read. This is a local demo,
+not a connected Codex session. See the [public roadmap](docs/ROADMAP.md) for
+focused contribution areas.
 
 The official MCP SDK is a root runtime dependency pinned by the lockfile. Codex and a Windows compiler are required only for their respective runtime features, not for every test.
 
