@@ -19,7 +19,7 @@ try {
 
         $access = [Security.AccessControl.AccessControlSections]::Access
         $currentSid = [Security.Principal.WindowsIdentity]::GetCurrent().User
-        # Persist only DACL changes. This does not preserve integrity labels or SACLs.
+        # Establish Owner and DACL only on the new empty temp; do not restore SACLs.
         $acl = New-Object Security.AccessControl.FileSecurity
         if ($AclSource) {
             if (-not [IO.Path]::IsPathRooted($AclSource)) { throw 'invalid' }
@@ -45,8 +45,19 @@ try {
             }
             $descriptor = $acl.GetSecurityDescriptorSddlForm($access)
         }
+        $targetAcl = [IO.File]::GetAccessControl(
+            $Path, [Security.AccessControl.AccessControlSections]::Owner
+        )
+        if ($targetAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne
+            $currentSid.Value) {
+            $acl.SetOwner($currentSid)
+        }
         [IO.File]::SetAccessControl($Path, $acl)
-        $actual = [IO.File]::GetAccessControl($Path, $access)
+        $actual = [IO.File]::GetAccessControl(
+            $Path, ($access -bor [Security.AccessControl.AccessControlSections]::Owner)
+        )
+        if ($actual.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne
+            $currentSid.Value) { throw 'invalid' }
         if ($actual.AreAccessRulesProtected -ne $acl.AreAccessRulesProtected) { throw 'invalid' }
         if ($actual.GetSecurityDescriptorSddlForm($access) -cne $descriptor) {
             # Windows may normalize the AI control flag. Compare the complete

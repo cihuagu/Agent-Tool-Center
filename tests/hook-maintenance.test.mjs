@@ -47,12 +47,16 @@ test('non-Windows apply refuses before IO and leaves preview and target unchange
   assert.deepEqual(await fs.readFile(packet.planPath), plan);
 });
 
-test('real Windows secure-temp protects empty files using only DACL access', windowsOnly, async (t) => {
+test('real Windows secure-temp establishes current ownership and DACL on empty files', windowsOnly, async (t) => {
   const f = await fixture(t);
   const temporary = path.join(f.directory, 'private.tmp');
   const copied = path.join(f.directory, 'copied.tmp');
+  const ordinary = path.join(f.directory, 'ordinary-source.json');
+  const rejected = path.join(f.directory, 'rejected.tmp');
   await fs.writeFile(temporary, '', { flag: 'wx' });
   await fs.writeFile(copied, '', { flag: 'wx' });
+  await fs.writeFile(ordinary, '{}\n', { flag: 'wx' });
+  await fs.writeFile(rejected, '', { flag: 'wx' });
   const quote = (value) => `'${value.replace(/'/g, "''")}'`;
   const helper = quote(path.join(root, 'scripts', 'protect-hook-backup.ps1'));
   const windowsPowerShell = quote(path.join(
@@ -64,6 +68,41 @@ test('real Windows secure-temp protects empty files using only DACL access', win
     $ErrorActionPreference = 'Stop'
     $temporary = ${quote(temporary)}
     $copied = ${quote(copied)}
+    $ordinary = ${quote(ordinary)}
+    $rejected = ${quote(rejected)}
+    $current = [Security.Principal.WindowsIdentity]::GetCurrent().User.Value
+    $access = [Security.AccessControl.AccessControlSections]::Access
+    $sections = $access -bor [Security.AccessControl.AccessControlSections]::Owner
+    $sourceBefore = [IO.File]::GetAccessControl($ordinary, $sections)
+    if ($sourceBefore.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $current) {
+      $targetBefore = [IO.File]::GetAccessControl($rejected, $sections)
+      $sourceDescriptor = $sourceBefore.GetSecurityDescriptorSddlForm($sections)
+      $targetDescriptor = $targetBefore.GetSecurityDescriptorSddlForm($sections)
+      $sourceBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes($ordinary))
+      $targetBytes = [Convert]::ToBase64String([IO.File]::ReadAllBytes($rejected))
+      $previousErrorActionPreference = $ErrorActionPreference
+      try {
+        $ErrorActionPreference = 'Continue'
+        $ack = & ${windowsPowerShell} -NoProfile -NonInteractive -File ${helper} -Mode secure-temp -Path $rejected -AclSource $ordinary 2>$null
+        $rejectionExitCode = $LASTEXITCODE
+      } finally {
+        $ErrorActionPreference = $previousErrorActionPreference
+      }
+      if ($rejectionExitCode -ne 1 -or $ack) { throw 'other owner accepted' }
+      foreach ($check in @(
+        @($ordinary, $sourceDescriptor, $sourceBytes),
+        @($rejected, $targetDescriptor, $targetBytes)
+      )) {
+        $unchanged = [IO.File]::GetAccessControl($check[0], $sections)
+        if ($unchanged.GetSecurityDescriptorSddlForm($sections) -cne $check[1] -or
+            [Convert]::ToBase64String([IO.File]::ReadAllBytes($check[0])) -cne $check[2]) {
+          throw 'rejection changed fixture'
+        }
+      }
+      [Console]::Out.Write('other-owner-source-rejected')
+    } else {
+      [Console]::Out.Write('other-owner-source-not-exercised')
+    }
     $ack = & ${windowsPowerShell} -NoProfile -NonInteractive -File ${helper} -Mode secure-temp -Path $temporary
     if ($LASTEXITCODE -ne 0 -or $ack -cne 'ok') { throw 'helper failed' }
     $acl = [IO.File]::GetAccessControl(
@@ -103,8 +142,11 @@ test('real Windows secure-temp protects empty files using only DACL access', win
     $ack = & ${windowsPowerShell} -NoProfile -NonInteractive -File ${helper} -Mode secure-temp -Path $copied -AclSource $temporary
     if ($LASTEXITCODE -ne 0 -or $ack -cne 'ok') { throw ('copy failed ' + $diagnosis) }
     $copyAcl = [IO.File]::GetAccessControl(
-      $copied, [Security.AccessControl.AccessControlSections]::Access
+      $copied, $sections
     )
+    if ($copyAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne $current) {
+      throw 'copy owner mismatch'
+    }
     $access = [Security.AccessControl.AccessControlSections]::Access
     if (-not $copyAcl.AreAccessRulesProtected -or
         $copyAcl.GetSecurityDescriptorSddlForm($access) -cne
@@ -118,9 +160,17 @@ test('real Windows secure-temp protects empty files using only DACL access', win
   assert.ifError(result.error);
   assert.equal(result.status, 0, result.stderr);
   assert.equal(result.stderr, '');
-  assert.equal(result.stdout, '');
+  assert.ok([
+    'other-owner-source-rejected', 'other-owner-source-not-exercised',
+  ].includes(result.stdout));
+  t.diagnostic(result.stdout);
+  if (result.stdout === 'other-owner-source-not-exercised') {
+    t.diagnostic('普通新文件已属当前用户；其他所有者来源拒绝分支未在本机执行');
+  }
   assert.equal((await fs.readFile(temporary)).length, 0);
   assert.equal((await fs.readFile(copied)).length, 0);
+  assert.equal(await fs.readFile(ordinary, 'utf8'), '{}\n');
+  assert.equal((await fs.readFile(rejected)).length, 0);
 });
 
 async function load(relative, exports) {
@@ -151,6 +201,45 @@ async function ordinaryDirectory(directory) {
   assert.equal(await fs.realpath(directory), directory);
 }
 
+function setFixtureOwner(target) {
+  if (process.platform !== 'win32') return;
+  const quoted = `'${target.replace(/'/g, "''")}'`;
+  const result = spawnSync(path.join(
+    process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
+  ), ['-NoProfile', '-NonInteractive', '-Command', `
+    $ErrorActionPreference = 'Stop'
+    try {
+      $current = [Security.Principal.WindowsIdentity]::GetCurrent().User
+      $before = [IO.File]::GetAccessControl(
+        ${quoted}, [Security.AccessControl.AccessControlSections]::Owner
+      )
+      if ($before.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne
+          $current.Value) {
+        $acl = New-Object Security.AccessControl.FileSecurity
+        $acl.SetOwner($current)
+        [IO.File]::SetAccessControl(${quoted}, $acl)
+      }
+      $actual = [IO.File]::GetAccessControl(
+        ${quoted}, [Security.AccessControl.AccessControlSections]::Owner
+      )
+      if ($actual.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne
+          $current.Value) { throw 'invalid' }
+    } catch {
+      [Console]::Error.Write('fixture owner setup failed')
+      exit 1
+    }
+  `], {
+    encoding: 'utf8',
+    windowsHide: true,
+    shell: false,
+    timeout: 30_000,
+  });
+  assert.ok(!result.error, '测试文件所有者设置必须正常启动并完成');
+  assert.equal(result.status, 0, '测试文件所有者设置失败');
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '');
+}
+
 async function fixture(t, initial) {
   const actualRoot = await fs.realpath(root);
   assert.equal(actualRoot, root, '项目根目录必须已规范化');
@@ -175,7 +264,10 @@ async function fixture(t, initial) {
     await ordinaryDirectory(directory);
     await fs.rm(directory, { recursive: true });
   });
-  if (initial !== undefined) await fs.writeFile(target, initial, { flag: 'wx' });
+  if (initial !== undefined) {
+    await fs.writeFile(target, initial, { flag: 'wx' });
+    setFixtureOwner(target);
+  }
   return {
     directory,
     target,

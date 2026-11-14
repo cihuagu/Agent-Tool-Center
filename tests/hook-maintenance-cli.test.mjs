@@ -18,6 +18,47 @@ const windowsOnly = {
   skip: process.platform !== 'win32' && '实际应用仅支持 Windows，POSIX ACL 发布尚未验证',
 };
 
+async function setFixtureOwner(target) {
+  if (process.platform !== 'win32') return;
+  const quoted = `'${target.replace(/'/g, "''")}'`;
+  let result;
+  try {
+    result = await execFileAsync(path.join(
+      process.env.SystemRoot, 'System32', 'WindowsPowerShell', 'v1.0', 'powershell.exe',
+    ), ['-NoProfile', '-NonInteractive', '-Command', `
+      $ErrorActionPreference = 'Stop'
+      try {
+        $current = [Security.Principal.WindowsIdentity]::GetCurrent().User
+        $before = [IO.File]::GetAccessControl(
+          ${quoted}, [Security.AccessControl.AccessControlSections]::Owner
+        )
+        if ($before.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne
+            $current.Value) {
+          $acl = New-Object Security.AccessControl.FileSecurity
+          $acl.SetOwner($current)
+          [IO.File]::SetAccessControl(${quoted}, $acl)
+        }
+        $actual = [IO.File]::GetAccessControl(
+          ${quoted}, [Security.AccessControl.AccessControlSections]::Owner
+        )
+        if ($actual.GetOwner([Security.Principal.SecurityIdentifier]).Value -cne
+            $current.Value) { throw 'invalid' }
+      } catch {
+        [Console]::Error.Write('fixture owner setup failed')
+        exit 1
+      }
+    `], {
+      windowsHide: true,
+      timeout: 30_000,
+      maxBuffer: 4096,
+    });
+  } catch {
+    assert.fail('测试文件所有者设置失败');
+  }
+  assert.equal(result.stdout, '');
+  assert.equal(result.stderr, '');
+}
+
 async function fixture(t) {
   let api;
   try {
@@ -52,6 +93,7 @@ async function fixture(t) {
     assert.ok(!(await fs.lstat(directory)).isSymbolicLink());
     await fs.rm(directory, { recursive: true });
   });
+  await setFixtureOwner(target);
   async function run(args) {
     try {
       const result = await execFileAsync(process.execPath, [script, ...args], {

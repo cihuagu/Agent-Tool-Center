@@ -110,10 +110,14 @@ bytes of a changed existing file are backed up before publication.
 
 Windows backups use CurrentUser DPAPI; recovery depends on the corresponding
 Windows user/DPAPI environment. The fixed PowerShell helper verifies protection
-round trips. Candidate files receive the existing target's access rules before
-any payload is written; newly created files use private user/SYSTEM access.
-This is a DACL operation, not a complete Windows security-descriptor restore;
-targets owned by another identity are refused. It does not request audit/SACL
+round trips. Newly created empty temporary candidates establish current-user
+ownership and receive the existing target's DACL before any payload is written;
+without an existing target, they use private user/SYSTEM access.
+Existing source ownership is unchanged and strictly checked against the current
+user; sources owned by another identity are refused. This establishes Owner and
+DACL on temporary candidates, not a complete security-descriptor or SACL restore.
+Changing the helper hash invalidates old plans; prepare a new plan without
+modifying existing plans, backups, or receipts. It does not request audit/SACL
 privileges or elevation. POSIX preview records use checked current ownership and
 0700/0600 permissions. An ignored cache alone is never the privacy guarantee.
 
