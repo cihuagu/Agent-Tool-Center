@@ -87,8 +87,21 @@ test('real Windows secure-temp protects empty files using only DACL access', win
         throw 'unexpected access'
       }
     }
+    $ownerAcl = [IO.File]::GetAccessControl(
+      $temporary, [Security.AccessControl.AccessControlSections]::Owner
+    )
+    $owner = $ownerAcl.GetOwner([Security.Principal.SecurityIdentifier]).Value
+    $principal = [Security.Principal.WindowsPrincipal]::new(
+      [Security.Principal.WindowsIdentity]::GetCurrent()
+    )
+    $diagnosis = [ordered]@{
+      ownerEqualsCurrentUser = ($owner -eq $current)
+      ownerIsAdministrators = ($owner -eq 'S-1-5-32-544')
+      isAdminToken = $principal.IsInRole([Security.Principal.WindowsBuiltInRole]::Administrator)
+    } | ConvertTo-Json -Compress
+    if ($owner -ne $current) { throw ('private temp owner mismatch ' + $diagnosis) }
     $ack = & ${windowsPowerShell} -NoProfile -NonInteractive -File ${helper} -Mode secure-temp -Path $copied -AclSource $temporary
-    if ($LASTEXITCODE -ne 0 -or $ack -cne 'ok') { throw 'copy failed' }
+    if ($LASTEXITCODE -ne 0 -or $ack -cne 'ok') { throw ('copy failed ' + $diagnosis) }
     $copyAcl = [IO.File]::GetAccessControl(
       $copied, [Security.AccessControl.AccessControlSections]::Access
     )
